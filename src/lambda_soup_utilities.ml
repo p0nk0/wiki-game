@@ -24,7 +24,7 @@ let get_first_item_of_all_unordered_lists contents : string list =
   |> map (fun elem ->
        match nth 2 (children elem) with
        | Some n -> n
-       | None -> failwith "aaah")
+       | None -> failwith "webpage has no unordered lists")
   |> to_list
   |> List.map ~f:(fun elem ->
        texts elem |> String.concat ~sep:"" |> String.strip)
@@ -32,14 +32,31 @@ let get_first_item_of_all_unordered_lists contents : string list =
 
 (* Gets the first item of the second unordered list in an HTML page. *)
 let get_first_item_of_second_unordered_list contents : string =
-  ignore (contents : string);
-  failwith "TODO"
+  let open Soup in
+  parse contents
+  $$ "ul"
+  |> (fun k ->
+       match nth 2 k with
+       | Some n -> n
+       | None -> failwith "webpage has 0 or 1 unordered lists")
+  |> (fun k ->
+       match child_element k with
+       | Some n -> n
+       | None -> failwith "webpage has empty unordered lists")
+  |> fun k ->
+  match leaf_text k with
+  | Some n -> n
+  | None -> failwith "unordered lists have no text"
 ;;
 
 (* Gets all bolded text from an HTML page. *)
 let get_bolded_text contents : string list =
-  ignore (contents : string);
-  failwith "TODO"
+  let open Soup in
+  parse contents
+  $$ "b"
+  |> to_list
+  |> List.map ~f:(fun elem -> trimmed_texts elem)
+  |> List.concat
 ;;
 
 (* [make_command ~summary ~f] is a helper function that builds a simple HTML

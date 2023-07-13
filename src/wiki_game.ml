@@ -1,4 +1,17 @@
 open! Core
+module Page = String
+
+module Wiki = struct
+  module Connection = struct
+    module T = struct
+      type t = Page.t * Page.t [@@deriving compare, sexp]
+    end
+
+    include Comparable.Make (T)
+  end
+
+  type t = Connection.Set.t [@@deriving sexp_of]
+end
 
 (* [get_linked_articles] should return a list of wikipedia article lengths
    contained in the input.
@@ -40,17 +53,67 @@ let print_links_command =
         List.iter (get_linked_articles contents) ~f:print_endline]
 ;;
 
+module G = Graph.Imperative.Digraph.Concrete (Page)
+
+module Dot = Graph.Graphviz.Dot (struct
+  include G
+
+  let edge_attributes _ = [ `Dir `Forward ]
+  let default_edge_attributes _ = []
+  let get_subgraph _ = None
+  let vertex_attributes v = [ `Shape `Box; `Label v; `Fillcolor 1000 ]
+  let vertex_name v = v
+  let default_vertex_attributes _ = []
+  let graph_attributes _ = []
+end)
+
+let trim_title title =
+  Lambda_soup_utilities.get_title title
+  |> Str.global_replace (Str.regexp {|\.|}) ""
+  |> Str.global_replace (Str.regexp {| - Wikipedia|}) ""
+  |> Str.global_replace (Str.regexp {|(|}) ""
+  |> Str.global_replace (Str.regexp {|)|}) ""
+  |> Str.global_replace (Str.regexp {| |}) "_"
+;;
+
 (* [visualize] should explore all linked articles up to a distance of
    [max_depth] away from the given [origin] article, and output the result as
    a DOT file. It should use the [how_to_fetch] argument along with
    [File_fetcher] to fetch the articles so that the implementation can be
    tested locally on the small dataset in the ../resources/wiki directory. *)
 let visualize ?(max_depth = 3) ~origin ~output_file ~how_to_fetch () : unit =
-  ignore (max_depth : int);
-  ignore (origin : string);
-  ignore (output_file : File_path.t);
-  ignore (how_to_fetch : File_fetcher.How_to_fetch.t);
-  failwith "TODO"
+  ignore max_depth;
+  let start_page = File_fetcher.fetch_exn how_to_fetch ~resource:origin in
+  let edges = ref Wiki.Connection.Set.empty in
+  let visited = Page.Hash_set.create () in
+  let to_visit = Queue.create () in
+  Queue.enqueue to_visit start_page;
+  let rec traverse depth =
+    match Queue.dequeue to_visit with
+    | None -> ()
+    | Some current_node ->
+      if not (Hash_set.mem visited current_node)
+      then Hash_set.add visited current_node;
+      if depth > 0
+      then
+        get_linked_articles current_node
+        |> List.iter ~f:(fun next_node ->
+             edges := Set.add !edges (current_node, next_node);
+             Queue.enqueue
+               to_visit
+               (File_fetcher.fetch_exn how_to_fetch ~resource:next_node));
+      traverse (depth - 1)
+  in
+  traverse max_depth;
+  let graph = G.create () in
+  Set.iter !edges ~f:(fun (page1, page2) ->
+    G.add_edge
+      graph
+      (trim_title page1)
+      (File_fetcher.fetch_exn how_to_fetch ~resource:page2 |> trim_title));
+  Dot.output_graph
+    (Out_channel.create (File_path.to_string output_file))
+    graph
 ;;
 
 let visualize_command =

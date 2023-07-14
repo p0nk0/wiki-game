@@ -1,6 +1,15 @@
 open! Core
 module Page = String
 
+module Path = struct
+  module T = struct
+    type t = Page.t list [@@deriving compare, sexp]
+  end
+
+  include T
+  include Comparable.Make (T)
+end
+
 module Wiki = struct
   module Connection = struct
     module T = struct
@@ -82,7 +91,6 @@ let trim_title title =
    [File_fetcher] to fetch the articles so that the implementation can be
    tested locally on the small dataset in the ../resources/wiki directory. *)
 let visualize ?(max_depth = 3) ~origin ~output_file ~how_to_fetch () : unit =
-  ignore max_depth;
   let start_page = File_fetcher.fetch_exn how_to_fetch ~resource:origin in
   let edges = ref Wiki.Connection.Set.empty in
   let visited = Page.Hash_set.create () in
@@ -97,6 +105,8 @@ let visualize ?(max_depth = 3) ~origin ~output_file ~how_to_fetch () : unit =
       if depth > 0
       then
         get_linked_articles current_node
+        |> List.filter ~f:(fun next_node ->
+             not (Hash_set.mem visited next_node))
         |> List.iter ~f:(fun next_node ->
              edges := Set.add !edges (current_node, next_node);
              Queue.enqueue
@@ -150,12 +160,56 @@ let visualize_command =
 
    [max_depth] is useful to limit the time the program spends exploring the
    graph. *)
+
+(* my code is mostly copy and pasted from visualize and mashed with maze *)
 let find_path ?(max_depth = 3) ~origin ~destination ~how_to_fetch () =
-  ignore (max_depth : int);
-  ignore (origin : string);
-  ignore (destination : string);
-  ignore (how_to_fetch : File_fetcher.How_to_fetch.t);
-  failwith "TODO"
+  let start_page = File_fetcher.fetch_exn how_to_fetch ~resource:origin in
+  let paths = ref Page.Map.empty in
+  let visited = Page.Hash_set.create () in
+  let to_visit = Queue.create () in
+  Queue.enqueue to_visit start_page;
+  let rec bfs depth =
+    match Queue.dequeue to_visit with
+    | None -> ()
+    | Some current_node ->
+      if not (Hash_set.mem visited current_node)
+      then Hash_set.add visited current_node;
+      if depth > 0
+      then
+        (* print_s [%message "\n\n" (Lambda_soup_utilities.get_title
+           current_node : string)]; *)
+        get_linked_articles current_node
+        |> List.filter ~f:(fun next_node ->
+             not (Hash_set.mem visited next_node))
+        |> List.iter ~f:(fun next_node ->
+             (* Map.iter_keys !paths ~f:(fun node -> print_s [%message (node,
+                Map.find_exn !paths node : string * string list)]); print_s
+                [%message "\n" next_node]; *)
+             (paths
+                := match
+                     Map.add
+                       !paths
+                       ~key:next_node
+                       ~data:(Lambda_soup_utilities.get_title current_node)
+                   with
+                   | `Ok result -> result
+                   | _ -> !paths);
+             Queue.enqueue
+               to_visit
+               (File_fetcher.fetch_exn how_to_fetch ~resource:next_node));
+      bfs (depth - 1)
+  in
+  bfs max_depth;
+  Map.iter_keys !paths ~f:(fun node ->
+    print_s [%message (node, Map.find_exn !paths node : string * string)]);
+  let rec create_path node =
+    if String.equal node (Lambda_soup_utilities.get_title start_page)
+    then []
+    else node :: create_path (Map.find_exn !paths node)
+  in
+  let result = create_path destination in
+  print_s [%message (result : Page.t list)];
+  None
 ;;
 
 let find_path_command =
